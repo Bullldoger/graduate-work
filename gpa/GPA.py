@@ -1,5 +1,5 @@
 """
-
+    Contain a class declaration with represent GPA system
 """
 
 import math
@@ -13,7 +13,7 @@ from numpy import dot
 
 class GPA:
     """
-
+        Represent GPA system
     """
 
     def __init__(self, params=None):
