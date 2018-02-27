@@ -262,7 +262,7 @@ class GPA:
 
             self.unknown_p.append(var_p)
 
-            if not p:
+            if p == None:
                 p = sm.symbols('p' + str(node))
                 self.variables.append(p)
                 self.var_literals.append(str(p))
@@ -270,7 +270,7 @@ class GPA:
                 self.base_approximation[str(var_p)] = p
                 self.known_p_nodes.append(node)
 
-            if not q:
+            if q == None:
                 q = sm.symbols('q' + str(node))
                 self.unknown_q.append(q)
             else:
@@ -341,13 +341,14 @@ class GPA:
 
             internal_nodes[0, u_index] += 1
             internal_nodes[1, v_index] += 1
+            var_x = sm.symbols('x' + str(node_index))
 
             if not x:
-                x = sm.symbols('x' + str(node_index))
+                x = var_x
                 self.variables.append(x)
                 self.var_literals.append(str(x))
 
-            self.gpa.add_edge(u_of_edge=u, v_of_edge=v, A=a, x=x)
+            self.gpa.add_edge(u_of_edge=u, v_of_edge=v, A=a, x=x, var=var_x)
 
         internal_nodes = numpy.logical_and(internal_nodes[0, :], internal_nodes[1, :])
         self.internal_nodes = set()
@@ -490,7 +491,7 @@ class GPA:
 
         return approximation
 
-    def subs_approximation_structure_graph(self, approximation):
+    def _subs_approximation_structure_graph(self, approximation):
         """
 
         :param approximation: approximation for subs to equations
@@ -567,7 +568,7 @@ class GPA:
 
         self.find_approximation = approximation
         self.solving_errors = errors
-        self.subs_approximation_structure_graph(self.find_approximation)
+        self._subs_approximation_structure_graph(self.find_approximation)
 
         return approximation
 
