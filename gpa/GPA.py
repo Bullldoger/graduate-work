@@ -122,13 +122,13 @@ class GPA:
         self.N_e = params['edges']['count']
         "attribute GPA.N_e - number of edges"
 
-        self.p_var = self.p_fix = self.q_var = self.q_fix = None
+        self.p_var = self.p_fix = self.q_var = self.q_fix = self.dp_var = self.dq_var = None
         "attribute GPA.p_var - variables p"
         "attribute GPA.p_fix - fixed p"
         "attribute GPA.q_var - variables q"
         "attribute GPA.q_fix - fixed q"
 
-        self.M_PP = self.M_PQ = self.M_QP = self.M = None
+        self.M_PP = self.M_PQ = self.M_QP = self.M = self.inv_M = None
 
         self.known_p_nodes = list()
         "attribute GPA.known_p_nodes - vertex order"
@@ -147,6 +147,8 @@ class GPA:
 
         self.find_approximation = None
         "attribute GPA.find_approximation  - founded variables"
+
+        self.full_approximation = None
 
         self.matrix_rows_order = list()
         "attribute GPA.matrix_rows_order - rows order"
@@ -379,7 +381,7 @@ class GPA:
             node_index = list(self.gpa.nodes()).index(node)
             node_params = self.gpa.nodes[node]
 
-            self.P[node_index] = node_params['P']
+            self.P[node_index] = node_params['var']
 
         self.X = sm.Matrix(self.X)
         self.Q = sm.Matrix(self.Q)
@@ -403,11 +405,12 @@ class GPA:
 
             p_s = self.gpa.nodes[u]['var']
             p_f = self.gpa.nodes[v]['var']
+            a = self.gpa.edges[edge]['A']
 
-            eq = p_s ** 2 - p_f ** 2
+            eq = sm.sqrt((p_s ** 2 - p_f ** 2) / a)
 
-            self.DF[eq_index] = sm.diff(eq, p_s).subs(self.base_approximation.items())
-            self.DL[eq_index] = -sm.diff(eq, p_f).subs(self.base_approximation.items())
+            self.DF[eq_index] = sm.diff(eq, p_s)
+            self.DL[eq_index] = -sm.diff(eq, p_f)
 
         self.DF = sm.diag(*self.DF)
         self.DL = sm.diag(*self.DL)
@@ -582,26 +585,32 @@ class GPA:
         self.q_var = self.Q[self.known_p_nodes, :]
         self.q_fix = self.Q[self.known_q_nodes, :]
 
-        aq = self.A[self.known_q_nodes, :]
-        ap = self.A[self.known_p_nodes, :]
+        a_q = self.A[self.known_q_nodes, :]
+        a_p = self.A[self.known_p_nodes, :]
 
-        aqf = self.AF[self.known_q_nodes, :]
-        apf = self.AF[self.known_p_nodes, :]
+        a_f_q = self.AF[self.known_q_nodes, :]
+        a_f_p = self.AF[self.known_p_nodes, :]
 
-        aql = self.AL[self.known_q_nodes, :]
-        apl = self.AL[self.known_p_nodes, :]
+        a_l_q = self.AL[self.known_q_nodes, :]
+        a_l_p = self.AL[self.known_p_nodes, :]
 
-        df = self.DF
-        dl = self.DL
+        d_f = self.DF
+        d_l = self.DL
 
-        self.M = sm.Matrix(sm.MatMul(aq, sm.Matrix(sm.MatAdd(sm.Matrix(sm.MatMul(df, sm.Matrix(aqf.T))),
-                                                             sm.Matrix(sm.MatMul(dl, sm.Matrix(aql.T)))))))
+        self.full_approximation = deepcopy(self.base_approximation)
+        self.full_approximation.update(self.find_approximation)
 
-        self.M_PQ = sm.Matrix(sm.MatMul(ap, sm.Matrix(sm.MatAdd(sm.Matrix(sm.MatMul(df, sm.Matrix(aqf.T))),
-                                                                sm.Matrix(sm.MatMul(dl, sm.Matrix(aql.T)))))))
+        self.M = a_q * (d_f * a_f_q.transpose() + d_l * a_l_q.transpose())
+        self.inv_M = deepcopy(self.M).inv()
+        self.M_PQ = a_p * (d_f * a_f_q.transpose() + d_l * a_l_q.transpose())
+        self.M_QP = a_q * (d_f * a_f_p.transpose() + d_l * a_l_p.transpose())
+        self.M_PP = a_p * (d_f * a_f_p.transpose() + d_l * a_l_p.transpose())
 
-        self.M_QP = sm.Matrix(sm.MatMul(aq, sm.Matrix(sm.MatAdd(sm.Matrix(sm.MatMul(df, sm.Matrix(apf.T))),
-                                                                sm.Matrix(sm.MatMul(dl, sm.Matrix(apl.T)))))))
+        self.M = self.M.subs(self.full_approximation.items())
+        self.inv_M = self.inv_M.subs(self.full_approximation.items())
+        self.M_QP = self.M_QP.subs(self.full_approximation.items())
+        self.M_PQ = self.M_PQ.subs(self.full_approximation.items())
+        self.M_PP = self.M_PP.subs(self.full_approximation.items())
 
-        self.M_PP = sm.Matrix(sm.MatMul(ap, sm.Matrix(sm.MatAdd(sm.Matrix(sm.MatMul(df, sm.Matrix(apf.T))),
-                                                                sm.Matrix(sm.MatMul(dl, sm.Matrix(apl.T)))))))
+        self.dp_var = self.inv_M * self.q_fix - self.inv_M * self.M_QP * self.p_fix
+        self.dq_var = self.M_PQ * self.inv_M * self.q_fix + (self.M_PP - self.M_PQ * self.inv_M * self.M_QP) * self.p_fix
