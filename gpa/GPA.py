@@ -279,9 +279,12 @@ class GPA:
                 self.base_approximation[str(var_q)] = q
                 self.known_q_nodes.append(node)
 
+            dp = sm.symbols('dp' + str(node))
+            dq = sm.symbols('dq' + str(node))
+
             self.gpa.add_node(node, P=p, P_min=p_min,
                               P_max=p_max, Q=q, Q_min=q_min,
-                              Q_max=q_max, name=name, var=var_p)
+                              Q_max=q_max, name=name, var=var_p, dp=dp, dq=dq)
 
         self.nodes = list(self.gpa.nodes())
 
@@ -377,11 +380,16 @@ class GPA:
         self.Q = sm.Matrix(numpy.dot(self.A, self.X))
 
         self.P = sm.zeros(rows=self.N_v, cols=1)
+        self.dP = sm.zeros(rows=self.N_v, cols=1)
+        self.dQ = sm.zeros(rows=self.N_v, cols=1)
+
         for node in self.gpa.nodes():
             node_index = list(self.gpa.nodes()).index(node)
             node_params = self.gpa.nodes[node]
 
             self.P[node_index] = node_params['var']
+            self.dP[node_index] = node_params['dp']
+            self.dQ[node_index] = node_params['dq']
 
         self.X = sm.Matrix(self.X)
         self.Q = sm.Matrix(self.Q)
@@ -584,10 +592,10 @@ class GPA:
         Constructing all sensitivities matrixes
         :return:
         """
-        self.p_var = self.P[self.known_q_nodes, :]
-        self.p_fix = self.P[self.known_p_nodes, :]
-        self.q_var = self.Q[self.known_p_nodes, :]
-        self.q_fix = self.Q[self.known_q_nodes, :]
+        self.p_var = self.dP[self.known_q_nodes, :]
+        self.p_fix = self.dP[self.known_p_nodes, :]
+        self.q_var = self.dQ[self.known_p_nodes, :]
+        self.q_fix = self.dQ[self.known_q_nodes, :]
 
         a_q = self.A[self.known_q_nodes, :]
         a_p = self.A[self.known_p_nodes, :]
@@ -600,7 +608,7 @@ class GPA:
 
         d_f = self.DF
         d_l = self.DL
-
+        
         self.full_approximation = deepcopy(self.base_approximation)
         self.full_approximation.update(self.find_approximation)
 
@@ -610,11 +618,11 @@ class GPA:
         self.M_QP = a_q * (d_f * a_f_p.transpose() + d_l * a_l_p.transpose())
         self.M_PP = a_p * (d_f * a_f_p.transpose() + d_l * a_l_p.transpose())
 
-        self.M = self.M.subs(self.full_approximation.items())
-        self.inv_M = self.inv_M.subs(self.full_approximation.items())
-        self.M_QP = self.M_QP.subs(self.full_approximation.items())
-        self.M_PQ = self.M_PQ.subs(self.full_approximation.items())
-        self.M_PP = self.M_PP.subs(self.full_approximation.items())
+        # self.M = self.M.subs(self.full_approximation.items())
+        # self.inv_M = self.inv_M.subs(self.full_approximation.items())
+        # self.M_QP = self.M_QP.subs(self.full_approximation.items())
+        # self.M_PQ = self.M_PQ.subs(self.full_approximation.items())
+        # self.M_PP = self.M_PP.subs(self.full_approximation.items())
 
         self.dp_var = self.inv_M * self.q_fix - self.inv_M * self.M_QP * self.p_fix
         self.dq_var = self.M_PQ * self.inv_M * self.q_fix + (self.M_PP - self.M_PQ * self.inv_M * self.M_QP) * self.p_fix
