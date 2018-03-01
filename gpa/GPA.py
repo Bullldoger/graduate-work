@@ -388,13 +388,17 @@ class GPA:
         self.A = sm.Matrix(self.A)
 
         self.AF = deepcopy(self.A)
+        self.AL = deepcopy(self.A)
 
         for row in range(self.AF.shape[0]):
             for col in range(self.AF.shape[1]):
                 if self.AF[row, col] == -1:
                     self.AF[row, col] = 0
 
-        self.AL = -(self.A - self.AF)
+        for row in range(self.AL.shape[0]):
+            for col in range(self.AL.shape[1]):
+                if self.AL[row, col] == 1:
+                    self.AL[row, col] = 0
 
         self.DF = sm.zeros(len(self.gpa.edges()), 1)
         self.DL = sm.zeros(len(self.gpa.edges()), 1)
