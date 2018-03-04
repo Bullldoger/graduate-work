@@ -33,6 +33,7 @@ class GPA(nx.DiGraph):
 
     def _read_params(self, params=None):
 
+        self.last_approximation = None
         self.known_p_nodes = list()
         self.known_q_nodes = list()
         self.nodes_numeration = dict()
@@ -40,12 +41,20 @@ class GPA(nx.DiGraph):
         self.known_x_edges = list()
         self.internal_nodes = list()
         self.base_approximation = dict()
+        self.approximations = list()
 
         if 'nodes' in params:
             self._read_nodes(params['nodes'].get('nodes_info'))
 
         if 'edges' in params:
             self._read_edges(params['edges'].get('edges_info'))
+
+        # self.known_p_nodes_indexes = [list(self.nodes()).index(node) for node in self.known_p_nodes]
+        # self.known_q_nodes_indexes = [list(self.nodes()).index(node) for node in self.known_q_nodes]
+
+        self.known_p_nodes_indexes = [int(node) - 1 for node in self.known_p_nodes]
+        self.known_q_nodes_indexes = [int(node) - 1 for node in self.known_q_nodes]
+
 
     def _read_nodes(self, nodes_info=None):
 
@@ -192,6 +201,8 @@ class GPA(nx.DiGraph):
 
         x_equations = self.A * self.X
 
+        print(x_equations)
+
         for internal_node in self.known_q_nodes:
             internal_node_index = list(self.nodes()).index(internal_node)
             equation = x_equations[internal_node_index]
@@ -261,4 +272,46 @@ class GPA(nx.DiGraph):
         for var in approximation:
             approximation[var] = round(approximation[var], points)
 
-        return approximation
+        self.last_approximation = deepcopy(approximation)
+        self.approximations.append(deepcopy(approximation))
+
+        return self
+
+    def construct_sense_matrix(self, base_approximation=None, d_approximation=None):
+
+        if base_approximation is None:
+            base_approximation = deepcopy(self.last_approximation)
+
+        assert not base_approximation is None
+
+        self.p_var = self.dP[self.known_q_nodes_indexes, :]
+        self.p_fix = self.dP[self.known_p_nodes_indexes, :]
+        self.q_var = self.dQ[self.known_p_nodes_indexes, :]
+        self.q_fix = self.dQ[self.known_q_nodes_indexes, :]
+
+        a_q = self.A[self.known_q_nodes_indexes, :]
+        a_p = self.A[self.known_p_nodes_indexes, :]
+
+        a_f_q = self.AF[self.known_q_nodes_indexes, :]
+        a_f_p = self.AF[self.known_p_nodes_indexes, :]
+
+        a_l_q = self.AL[self.known_q_nodes_indexes, :]
+        a_l_p = self.AL[self.known_p_nodes_indexes, :]
+
+        d_f = self.DF.subs(base_approximation.items())
+        d_l = self.DL.subs(base_approximation.items())
+
+        self.M = a_q * (d_f * a_f_q.transpose() + d_l * a_l_q.transpose())
+        self.inv_M = deepcopy(self.M).inv()
+        self.M_PQ = a_p * (d_f * a_f_q.transpose() + d_l * a_l_q.transpose())
+        self.M_QP = a_q * (d_f * a_f_p.transpose() + d_l * a_l_p.transpose())
+        self.M_PP = a_p * (d_f * a_f_p.transpose() + d_l * a_l_p.transpose())
+
+        self.dp_var = self.inv_M * self.q_fix - self.inv_M * self.M_QP * self.p_fix
+        self.dq_var = self.M_PQ * self.inv_M * self.q_fix + (self.M_PP - self.M_PQ * self.inv_M * self.M_QP) * self.p_fix
+
+        if not d_approximation is None:
+            self.dp_var = self.dp_var.subs(d_approximation.items())
+            self.dq_var = self.dq_var.subs(d_approximation.items())
+
+        return self
