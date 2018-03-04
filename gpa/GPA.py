@@ -162,6 +162,8 @@ class GPA:
         self.var_literals = list()
         "attribute GPA.var_literals - names of variables for searching"
 
+        self.modeling_gpa = list()
+
         self._read_nodes(self.nodes_info)
         self._read_edges(self.edges_info)
 
@@ -263,8 +265,9 @@ class GPA:
             var_q = sm.symbols('q' + str(node))
 
             self.unknown_p.append(var_p)
+            self.unknown_q.append(var_q)
 
-            if p == None:
+            if p is None:
                 p = sm.symbols('p' + str(node))
                 self.variables.append(p)
                 self.var_literals.append(str(p))
@@ -272,7 +275,7 @@ class GPA:
                 self.base_approximation[str(var_p)] = p
                 self.known_p_nodes.append(node)
 
-            if q == None:
+            if q is None:
                 q = sm.symbols('q' + str(node))
                 self.unknown_q.append(q)
             else:
@@ -301,66 +304,6 @@ class GPA:
 
         self.known_p_nodes, self.known_q_nodes = tmp_p, tmp_q
 
-    def _read_edges(self, edge_part=None):
-        """
-
-        :param edge_part:
-        :type edge_part: dict()
-
-        edge_part(example):
-        {
-        "count": 3,
-        "edges_info": {
-            "1": {
-                "A": 0.1,
-                "u": "1",
-                "v": "2",
-                "x": null
-                },
-            "2": {
-                "A": 0.1,
-                "u": "2",
-                "v": "3",
-                "x": null
-                },
-            "3": {
-                "A": 0.1,
-                "u": "2",
-                "v": "4",
-                "x": null
-            }
-        }
-
-        :return:
-        """
-        internal_nodes = numpy.zeros([2, self.N_v])
-
-        for node_index, value in sorted(edge_part.items(), key=lambda sorting_param: int(sorting_param[0][0])):
-            u = value['u']
-            v = value['v']
-            a = value['A']
-            x = value['x']
-
-            u_index = self.nodes_numeration[u]
-            v_index = self.nodes_numeration[v]
-
-            internal_nodes[0, u_index] += 1
-            internal_nodes[1, v_index] += 1
-            var_x = sm.symbols('x' + str(node_index))
-
-            if not x:
-                x = var_x
-                self.variables.append(x)
-                self.var_literals.append(str(x))
-
-            self.gpa.add_edge(u_of_edge=u, v_of_edge=v, A=a, x=x, var=var_x)
-
-        internal_nodes = numpy.logical_and(internal_nodes[0, :], internal_nodes[1, :])
-        self.internal_nodes = set()
-        for node_index, is_internal in enumerate(internal_nodes):
-            if is_internal:
-                self.internal_nodes.add(str(node_index + 1))
-
     def _init_matrix(self):
         """
 
@@ -373,7 +316,7 @@ class GPA:
             edge_index = list(self.gpa.edges()).index(edge)
             edge_params = self.gpa.edges[edge]
 
-            self.X[edge_index] = edge_params['x']
+            self.X[edge_index] = edge_params['var']
 
         self.X = numpy.array(self.X)
         self.A = numpy.array(nx.incidence_matrix(self.gpa, oriented=True).todense())
@@ -438,24 +381,93 @@ class GPA:
         nodes = self.gpa.nodes()
 
         self.equations = list()
+        self.equations_vars = list()
 
         for u, v in sorted(self.gpa.edges(), key=lambda x: int(x[0])):
             p_s = nodes[u]['P']
+            p_s_v = nodes[u]['var']
             p_f = nodes[v]['P']
+            p_f_v = nodes[v]['var']
+
             q = edges[(u, v)]['x']
+            q_v = edges[(u, v)]['var']
+
             a = edges[(u, v)]['A']
 
             eq = p_s ** 2 - p_f ** 2 - a * q ** 2
-
+            eq_v = p_s_v ** 2 - p_f_v ** 2 - a * q_v ** 2
             self.equations.append(eq)
+            self.equations_vars.append(eq_v)
 
         for el in self.internal_nodes:
             eq_index = list(self.gpa.nodes()).index(el)
             eq = deepcopy(self.Q[eq_index])
 
             self.equations.append(eq)
+            self.equations_vars.append(eq)
             self.Q[eq_index] = self.gpa.nodes[el]['Q']
         self.equations = sm.Matrix(self.equations)
+        self.equations_vars = sm.Matrix(self.equations_vars)
+
+    def _read_edges(self, edge_part=None):
+        """
+
+        :param edge_part:
+        :type edge_part: dict()
+
+        edge_part(example):
+        {
+        "count": 3,
+        "edges_info": {
+            "1": {
+                "A": 0.1,
+                "u": "1",
+                "v": "2",
+                "x": null
+                },
+            "2": {
+                "A": 0.1,
+                "u": "2",
+                "v": "3",
+                "x": null
+                },
+            "3": {
+                "A": 0.1,
+                "u": "2",
+                "v": "4",
+                "x": null
+            }
+        }
+
+        :return:
+        """
+        internal_nodes = numpy.zeros([2, self.N_v])
+
+        for node_index, value in sorted(edge_part.items(), key=lambda sorting_param: int(sorting_param[0][0])):
+            u = value['u']
+            v = value['v']
+            a = value['A']
+            x = value['x']
+
+            u_index = self.nodes_numeration[u]
+            v_index = self.nodes_numeration[v]
+
+            internal_nodes[0, u_index] += 1
+            internal_nodes[1, v_index] += 1
+            var_x = sm.symbols('x' + str(node_index))
+
+            if not x:
+                x = var_x
+                self.variables.append(x)
+                self.var_literals.append(str(x))
+
+            self.gpa.add_edge(u_of_edge=u, v_of_edge=v, A=a, x=x, var=var_x)
+
+        internal_nodes = numpy.logical_and(internal_nodes[0, :], internal_nodes[1, :])
+        self.internal_nodes = set()
+        for node_index, is_internal in enumerate(internal_nodes):
+            if is_internal:
+                self.internal_nodes.add(str(node_index + 1))
 
     def _init_jacobi_matrix(self):
         """
@@ -465,15 +477,15 @@ class GPA:
         :return:
         """
         self.jacobi_matrixes = dict()
-        self.Jacobi = sm.zeros(len(self.equations), len(self.variables))
-        for eq_index, eq in enumerate(self.equations):
+        self.Jacobi = sm.zeros(len(self.equations_vars), len(self.variables))
+        for eq_index, eq in enumerate(self.equations_vars):
             for var_index, var in enumerate(self.variables):
                 eq_d = sm.diff(eq, var)
                 self.Jacobi[eq_index, var_index] = eq_d
 
         for var_index, var in enumerate(self.variables):
             jacobi_var = deepcopy(self.Jacobi)
-            jacobi_var[:, var_index] = self.equations
+            jacobi_var[:, var_index] = self.equations_vars
             self.jacobi_matrixes[str(var)] = jacobi_var
 
     def _solve_step(self, approximation):
@@ -506,7 +518,7 @@ class GPA:
 
         return approximation
 
-    def _subs_approximation_structure_graph(self, approximation):
+    def subs_approximation_structure_graph(self, gpa=None, approximation={}):
         """
 
         :param approximation: approximation for subs to equations
@@ -522,21 +534,27 @@ class GPA:
 
         :return:
         """
-        for node in self.gpa.nodes():
-            node_info = self.gpa.nodes[node]
+        if gpa is None:
+            gpa = self.gpa
+
+        for node in gpa.nodes():
+            node_info = gpa.nodes[node]
             for var, value in approximation.items():
                 if str(node_info['P']) == var:
                     node_info['P'] = value
 
-        for edge in self.gpa.edges():
-            edge_info = self.gpa.edges[edge]
+        for edge in gpa.edges():
+            edge_info = gpa.edges[edge]
             for var, value in approximation.items():
                 if str(edge_info['x']) == var:
                     edge_info['x'] = value
 
-    def solve_equations(self, start_approximation=None, eps=0.001, iterations=25):
+        return gpa
+
+    def solve_equations(self, base_approximation=None, start_approximation=None, eps=0.001, iterations=25):
         """
 
+        :param base_approximation:
         :param start_approximation: first approximation for searching system decision
         :type start_approximation: dict()
         :param eps: accuracy
@@ -559,6 +577,9 @@ class GPA:
         if not start_approximation:
             raise KeyError('Начальное приближение не задано!')
 
+        if not base_approximation:
+            base_approximation = self.base_approximation
+
         start_approximation_vars = list(start_approximation.keys())
 
         for var in self.var_literals:
@@ -566,6 +587,7 @@ class GPA:
                 raise KeyError('Не задано начальное значение для ' + str(var))
 
         approximation = start_approximation
+        approximation.update(base_approximation)
         errors = list()
 
         for _ in range(iterations):
@@ -582,10 +604,14 @@ class GPA:
             approximation[var] = round(approximation[var], points)
 
         self.find_approximation = approximation
-        self.solving_errors = errors
-        self._subs_approximation_structure_graph(self.find_approximation)
 
-        return approximation
+        self.full_approximation = deepcopy(self.base_approximation)
+        self.full_approximation.update(self.find_approximation)
+
+        self.solving_errors = errors
+        gpa = deepcopy(self.gpa)
+        self.subs_approximation_structure_graph(gpa, self.find_approximation)
+        self.modeling_gpa.append(gpa)
 
     def construct_sense_matrix(self):
         """
@@ -608,9 +634,6 @@ class GPA:
 
         d_f = self.DF
         d_l = self.DL
-        
-        self.full_approximation = deepcopy(self.base_approximation)
-        self.full_approximation.update(self.find_approximation)
 
         self.M = a_q * (d_f * a_f_q.transpose() + d_l * a_l_q.transpose())
         self.inv_M = deepcopy(self.M).inv()
@@ -618,11 +641,17 @@ class GPA:
         self.M_QP = a_q * (d_f * a_f_p.transpose() + d_l * a_l_p.transpose())
         self.M_PP = a_p * (d_f * a_f_p.transpose() + d_l * a_l_p.transpose())
 
-        # self.M = self.M.subs(self.full_approximation.items())
-        # self.inv_M = self.inv_M.subs(self.full_approximation.items())
-        # self.M_QP = self.M_QP.subs(self.full_approximation.items())
-        # self.M_PQ = self.M_PQ.subs(self.full_approximation.items())
-        # self.M_PP = self.M_PP.subs(self.full_approximation.items())
-
         self.dp_var = self.inv_M * self.q_fix - self.inv_M * self.M_QP * self.p_fix
         self.dq_var = self.M_PQ * self.inv_M * self.q_fix + (self.M_PP - self.M_PQ * self.inv_M * self.M_QP) * self.p_fix
+
+        out_d = dict()
+        var_index = 0
+        for eq in self.dp_var:
+            out_d['d' + str(self.variables[var_index])] = eq.subs(self.full_approximation.items())
+            var_index += 1
+
+        for eq in self.dq_var:
+            out_d['d' + str(self.variables[var_index])] = eq.subs(self.full_approximation.items())
+            var_index += 1
+
+        return out_d
