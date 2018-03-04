@@ -1,6 +1,6 @@
 import networkx as nx
 import sympy as sm
-import numpy
+from sympy.solvers import solve_poly_system
 
 import math
 from copy import deepcopy
@@ -26,6 +26,14 @@ class GPA(nx.DiGraph):
 
         self.jacobi_matrixes = dict()
 
+        self.nQ = self.nP = None
+        self.current_sort_P = self.current_sort_Q = None
+        self.d_approximation = None
+        self.M = self.inv_M = self.M_PQ = self.M_QP = self.M_PP = None
+
+        self.p_var = self.p_fix = self.q_var = self.q_fix = None
+        self.last_approximation = None
+
         self._read_params(params=params)
         self._init_matrixes()
         self._init_equations()
@@ -49,12 +57,8 @@ class GPA(nx.DiGraph):
         if 'edges' in params:
             self._read_edges(params['edges'].get('edges_info'))
 
-        # self.known_p_nodes_indexes = [list(self.nodes()).index(node) for node in self.known_p_nodes]
-        # self.known_q_nodes_indexes = [list(self.nodes()).index(node) for node in self.known_q_nodes]
-
         self.known_p_nodes_indexes = [int(node) - 1 for node in self.known_p_nodes]
         self.known_q_nodes_indexes = [int(node) - 1 for node in self.known_q_nodes]
-
 
     def _read_nodes(self, nodes_info=None):
 
@@ -85,7 +89,8 @@ class GPA(nx.DiGraph):
             q_min = q_info['Q_min']
 
             p_variable, q_variable = sm.symbols('p' + str(node_index + 1)), sm.symbols('q' + str(node_index + 1))
-            self.dp_variable, self.dq_variable = sm.symbols('dp' + str(node_index + 1)), sm.symbols('dq' + str(node_index + 1))
+            self.dp_variable, self.dq_variable = sm.symbols('dp' + str(node_index + 1)), sm.symbols(
+                'dq' + str(node_index + 1))
 
             dp = deepcopy(self.dp_variable)
             dq = deepcopy(self.dq_variable)
@@ -121,13 +126,28 @@ class GPA(nx.DiGraph):
 
         assert isinstance(edge_part, dict)
 
-        for edge_index, edge in enumerate(sorted(edge_part.keys(), key=lambda edge_number: edge_number)):
+        self.q_to_x_mapping = {
+            'to': {
+
+            },
+            'from': {
+
+            }
+        }
+
+        for edge_index, edge in enumerate(edge_part.keys()):
             edge_info = edge_part[edge]
 
             u = edge_info['u']
             v = edge_info['v']
             a = edge_info['A']
             x = edge_info['x']
+
+            node_u_info = self.nodes[u]
+            node_v_info = self.nodes[v]
+
+            self.q_to_x_mapping['to'][(u, v)] = node_v_info['variable_q']
+            self.q_to_x_mapping['from'][(u, v)] = node_u_info['variable_q']
 
             variable_x = sm.symbols('x' + str(edge_index + 1))
 
@@ -144,11 +164,13 @@ class GPA(nx.DiGraph):
 
         self.X = sm.zeros(rows=self.n_e, cols=1)
 
-        for edge_index, (edge, edge_info) in enumerate(sorted(self.edges.items(), key=lambda edge: edge[0][0])):
+        for edge_index, (edge, edge_info) in enumerate(sorted(self.edges.items(),
+                                                              key=lambda edge_sort_key: int(edge_sort_key[0][0]))):
             edge_index = list(self.edges()).index(edge)
             self.X[edge_index] = edge_info['variable_x']
 
         self.A = nx.incidence_matrix(self, oriented=True).todense()
+        self.Q_symbols = sm.Matrix(deepcopy(self.Q))
         self.Q = self.A * self.X
         self.AF = deepcopy(self.A)
         self.AL = deepcopy(self.A)
@@ -164,7 +186,8 @@ class GPA(nx.DiGraph):
         self.DF = sm.zeros(len(self.edges()), 1)
         self.DL = sm.zeros(len(self.edges()), 1)
 
-        for equation_index, (edge, edge_info) in enumerate(sorted(self.edges.items(), key=lambda edge: edge[0][0])):
+        for equation_index, (edge, edge_info) in enumerate(sorted(self.edges.items(),
+                                                                  key=lambda edge_sort_key: edge_sort_key[0][0])):
             u = edge[0]
             v = edge[1]
 
@@ -201,11 +224,9 @@ class GPA(nx.DiGraph):
 
         x_equations = self.A * self.X
 
-        print(x_equations)
-
         for internal_node in self.known_q_nodes:
             internal_node_index = list(self.nodes()).index(internal_node)
-            equation = x_equations[internal_node_index]
+            equation = x_equations[internal_node_index] - self.nodes[internal_node]['Q']
             equations.append(equation)
 
         self.equations = sm.Matrix(equations)
@@ -277,12 +298,43 @@ class GPA(nx.DiGraph):
 
         return self
 
+    def subs_approximation_structure_graph(self, approximation=None):
+        """
+
+        :param approximation: approximation for subs to equations
+        :type approximation: dict
+        approximation(example):
+        {
+            "p2": 1,
+            "x1": 1,
+            "x2": 1,
+            "x3": 1
+        }
+
+
+        :return:
+        """
+
+        for node in self.nodes():
+            node_info = self.nodes[node]
+            for var, value in approximation.items():
+                if str(node_info['P']) == var:
+                    node_info['P'] = value
+
+        for edge in self.edges():
+            edge_info = self.edges[edge]
+            for var, value in approximation.items():
+                if str(edge_info['X']) == var:
+                    edge_info['X'] = value
+
+        return self
+
     def construct_sense_matrix(self, base_approximation=None, d_approximation=None):
 
         if base_approximation is None:
             base_approximation = deepcopy(self.last_approximation)
 
-        assert not base_approximation is None
+        assert base_approximation is not None
 
         self.p_var = self.dP[self.known_q_nodes_indexes, :]
         self.p_fix = self.dP[self.known_p_nodes_indexes, :]
@@ -307,11 +359,30 @@ class GPA(nx.DiGraph):
         self.M_QP = a_q * (d_f * a_f_p.transpose() + d_l * a_l_p.transpose())
         self.M_PP = a_p * (d_f * a_f_p.transpose() + d_l * a_l_p.transpose())
 
-        self.dp_var = self.inv_M * self.q_fix - self.inv_M * self.M_QP * self.p_fix
-        self.dq_var = self.M_PQ * self.inv_M * self.q_fix + (self.M_PP - self.M_PQ * self.inv_M * self.M_QP) * self.p_fix
+        self.p_var = self.inv_M * self.q_fix - self.inv_M * self.M_QP * self.p_fix
+        self.q_var = self.M_PQ * self.inv_M * self.q_fix + (self.M_PP - self.M_PQ * self.inv_M * self.M_QP) * self.p_fix
 
-        if not d_approximation is None:
-            self.dp_var = self.dp_var.subs(d_approximation.items())
-            self.dq_var = self.dq_var.subs(d_approximation.items())
+        if d_approximation is not None:
+            self.p_var = self.p_var.subs(d_approximation.items())
+            self.q_var = self.q_var.subs(d_approximation.items())
+
+            self.nQ = (self.A * self.X).subs(base_approximation.items()) + sm.Matrix([self.q_fix, self.q_var]).subs(
+                d_approximation.items())
+            self.nP = self.P[self.known_p_nodes_indexes + self.known_q_nodes_indexes, :].subs(
+                base_approximation.items()) + sm.Matrix([self.p_fix, self.p_var]).subs(d_approximation.items())
+
+            self.current_sort_P = self.P[self.known_p_nodes_indexes + self.known_q_nodes_indexes, :]
+            self.current_sort_Q = self.Q_symbols[self.known_q_nodes_indexes + self.known_p_nodes_indexes, :]
+
+            self.d_approximation = dict()
+
+            for variable, value in zip(self.current_sort_P, self.nP):
+                self.d_approximation[str(variable)] = value
+
+            x = solve_poly_system(self.A * self.X - self.nQ, self.X.atoms(sm.Symbol))[0]
+            x = {str(sym): value for value, sym in zip(x, self.X.atoms(sm.Symbol))}
+
+            self.d_approximation.update(x)
+            self.approximations.append(self.d_approximation)
 
         return self
